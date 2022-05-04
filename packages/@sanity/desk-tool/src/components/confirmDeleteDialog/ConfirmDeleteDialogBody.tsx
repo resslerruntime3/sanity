@@ -1,4 +1,4 @@
-import React from 'react'
+import React, {useCallback} from 'react'
 import {
   WarningOutlineIcon,
   DocumentsIcon,
@@ -6,31 +6,81 @@ import {
   UnknownIcon,
   ChevronDownIcon,
 } from '@sanity/icons'
-import {useToast, Text, Box, Button, Flex, Label, Card} from '@sanity/ui'
-import {SanityPreview, SanityDefaultPreview} from '@sanity/base/preview'
+import {useToast, Text, Box, Button, Flex, Label, Card, Stack} from '@sanity/ui'
+import {SanityDefaultPreview} from '@sanity/base/preview'
 import {CopyToClipboard} from 'react-copy-to-clipboard'
-import {SchemaType} from '@sanity/types'
-import {ReferringDocuments} from './useReferringDocuments'
+import {SanityDocument, SchemaType} from '@sanity/types'
+import {useDocumentPresence} from '@sanity/base/hooks'
+import {PreviewCard} from '@sanity/base/components'
+import {getPublishedId} from 'part:@sanity/base/util/draft-utils'
+import {PaneItemPreview} from '../paneItem/PaneItemPreview'
+import {usePaneRouter} from '../../_exports'
 import {
   ReferencesCard,
-  InternalReferences,
   OtherReferenceCount,
   CrossDatasetReferencesDetails,
   CrossDatasetReferencesSummary,
   TableContainer,
   Table,
   ChevronWrapper,
+  StyledVirtualList,
 } from './ConfirmDeleteDialogBody.styles'
+import {ReferringDocuments} from './useReferringDocuments'
 
 type DeletionConfirmationDialogBodyProps = Required<ReferringDocuments> & {
   documentTitle: React.ReactNode
   action: string
+  onReferenceLinkClick?: () => void
 }
 
 function getSchemaType(typeName: string): SchemaType | null {
   const schemaMod = require('part:@sanity/base/schema')
   const schema = schemaMod.default || schemaMod
   return schema.get(typeName) || null
+}
+
+const EMPTY_ARRAY: [] = []
+
+function ReferenceLink(props: {
+  type: SchemaType & {icon?: any}
+  value: SanityDocument
+  onClick?: () => void
+}) {
+  const {value, type, onClick} = props
+  const publishedId = getPublishedId(value?._id)
+  const documentPresence = useDocumentPresence(publishedId)
+  const {ReferenceChildLink} = usePaneRouter()
+
+  const Link = useCallback(
+    (linkProps: {children: React.ReactNode}) => (
+      <ReferenceChildLink
+        documentId={value?._id}
+        documentType={type?.name}
+        parentRefPath={EMPTY_ARRAY}
+        {...linkProps}
+      />
+    ),
+    [ReferenceChildLink, type?.name, value?._id]
+  )
+
+  return (
+    <PreviewCard
+      __unstable_focusRing
+      as={Link}
+      data-as="a"
+      padding={2}
+      radius={2}
+      onClick={onClick}
+    >
+      <PaneItemPreview
+        icon={type?.icon}
+        layout="default"
+        presence={documentPresence?.length > 0 ? documentPresence : EMPTY_ARRAY}
+        schemaType={type}
+        value={value}
+      />
+    </PreviewCard>
+  )
 }
 
 /**
@@ -44,8 +94,33 @@ export function ConfirmDeleteDialogBody({
   totalCount,
   action,
   projectIds,
+  onReferenceLinkClick,
 }: DeletionConfirmationDialogBodyProps) {
   const toast = useToast()
+
+  const renderPreviewItem = useCallback(
+    (item) => {
+      const type = getSchemaType(item._type)
+
+      if (type) {
+        return <ReferenceLink type={type} value={item} onClick={onReferenceLinkClick} />
+      }
+
+      return (
+        <Box padding={2}>
+          <SanityDefaultPreview
+            value={{
+              title: 'Preview Unavailable',
+              subtitle: `ID: ${item._id}`,
+              media: <UnknownIcon />,
+            }}
+            layout="default"
+          />
+        </Box>
+      )
+    },
+    [onReferenceLinkClick]
+  )
 
   if (internalReferences?.totalCount === 0 && crossDatasetReferences?.totalCount === 0) {
     return (
@@ -93,33 +168,21 @@ export function ConfirmDeleteDialogBody({
       <ReferencesCard>
         <Flex direction="column" height="fill">
           {internalReferences.totalCount > 0 && (
-            <InternalReferences data-testid="internal-references">
-              {internalReferences.references.map((internalReference) => {
-                const type = getSchemaType(internalReference._type)
+            <Stack padding={3} space={3} overflow="auto">
+              <StyledVirtualList
+                data-testid="internal-references"
+                forwardedAs="ul"
+                gap={3}
+                items={internalReferences.references}
+                renderItem={renderPreviewItem}
+              />
 
-                return (
-                  <Box as="li" key={internalReference._id} paddingX={3} paddingY={3}>
-                    {type ? (
-                      <SanityPreview type={type} value={internalReference} layout="default" />
-                    ) : (
-                      <SanityDefaultPreview
-                        value={{
-                          title: 'Preview Unavailable',
-                          subtitle: `ID: ${internalReference._id}`,
-                          media: <UnknownIcon />,
-                        }}
-                        layout="default"
-                      />
-                    )}
-                  </Box>
-                )
-              })}
               {internalReferences.totalCount > internalReferences.references.length && (
                 <Box as="li" padding={3}>
                   <OtherReferenceCount {...internalReferences} />
                 </Box>
               )}
-            </InternalReferences>
+            </Stack>
           )}
 
           {crossDatasetReferences.totalCount > 0 && (
